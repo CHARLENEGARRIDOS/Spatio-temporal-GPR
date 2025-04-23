@@ -1,0 +1,319 @@
+---
+title: "newcode"
+author: "Garridos, Charlene P."
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 5
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Libraries
+
+```{r, message=FALSE}
+library(ggplot2)     
+library(dplyr)
+library(tidyr)
+library(spacetime)
+library(sp)
+library(gstat)
+library(maps)
+library(tidygeocoder)
+library(lubridate)
+library(reshape2)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(tidyverse)
+library(corrplot)
+library(pheatmap)
+library(gridExtra)
+```
+
+# Load the dataset
+
+```{r}
+data <- read.csv("C:/Users/User/Downloads/hungary_chickenpox5.csv", stringsAsFactors = FALSE)
+
+View(data)
+```
+
+## Date
+
+```{r}
+# This parses the Date column in the data dataset and converts it into a date-time format
+data$Date <- parse_date_time(data$Date, orders = c("d/m/Y", "d/m/y", "m/d/Y", "m/d/y"))
+# This converts the parsed date-time values into pure Date format (YYYY-MM-DD).
+data$Date <- as.Date(data$Date)  # Convert to YYYY-MM-DD format
+
+# Sort data by Date
+data <- data %>% arrange(Date)
+
+tail(data)
+```
+
+## Rename
+
+```{r}
+# Fix region names 
+data <- data %>% rename(
+  "BUDAPEST" = "BUDAPEST",
+  "BARANYA" = "BARANYA",
+  "BÁCS-KISKUN" = "BACS",
+  "BÉKÉS" = "BEKES",
+  "BORSOD-ABAÚJ-ZEMPLÉN" = "BORSOD",
+  "CSONGRÁD" = "CSONGRAD",
+  "FEJÉR" = "FEJER",
+  "GYŐR-MOSON-SOPRON" = "GYOR",
+  "HAJDÚ-BIHAR" = "HAJDU",
+  "HEVES" = "HEVES",
+  "JÁSZ-NAGYKUN-SZOLNOK" = "JASZ",
+  "KOMÁROM-ESZTERGOM" = "KOMAROM",
+  "NÓGRÁD" = "NOGRAD",
+  "PEST" = "PEST", 
+  "SOMOGY" = "SOMOGY",
+  "SZABOLCS-SZATMÁR-BEREG" = "SZABOLCS",
+  "TOLNA" = "TOLNA",
+  "VAS" = "VAS",
+  "VESZPRÉM" = "VESZPREM",
+  "ZALA" = "ZALA"
+)
+```
+
+## Location
+
+```{r}
+regions <- data.frame(Region = colnames(data)[-1])  # Exclude the first column (Date)
+
+# Geocode the regions dynamically
+regions <- regions %>%
+  geocode(address = Region, method = "osm")  
+
+regions
+```
+
+## Long Format
+
+```{r}
+# for data manipulation, aggregation, and visualization
+# Merge geolocation data back into data dataset
+data_long <- data %>%
+  pivot_longer(-Date, names_to = "Region", values_to = "Value") %>%
+  left_join(regions, by = "Region")  # Merging lat/lon
+
+View(data_long)
+```
+
+# Visualization
+
+## Missing Value
+
+```{r}
+# Handle missing values
+# Count the number of NAs in data_long
+Na.data_long <- sum(is.na(data_long$Value))
+cat("Number of NAs in data_long: ", Na.data_long, "\n")
+```
+
+## Time series Plot
+
+```{r}
+# Loop through each region and generate separate plots
+for (region in unique(data_long$Region)) {
+  # Filter data for the specific region
+  region_data <- data_long %>% filter(Region == region)
+  
+  p <- ggplot(region_data, aes(x = Date, y = Value)) +
+    geom_line(color = "blue", linewidth = 0.5) +  
+    labs(title = paste("Chickenpox Cases in", region), x = "Date", y = "Cases") +
+    scale_x_date(date_labels = "%Y", date_breaks = "1 year") + 
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+  
+  print(p)
+}
+```
+
+```{r}
+library(ggplot2)
+
+# Plot all regions in a single figure
+p <- ggplot(data_long, aes(x = Date, y = Value, color = Region)) +
+  geom_line(linewidth = 0.5) +  
+  labs(title = "Chickenpox Cases Across Regions", x = "Date", y = "Cases") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(p)
+```
+
+## Hovmoller Plots
+
+```{r}
+ggplot(data_long, aes(x = Date, y = Region, fill = Value)) +
+  geom_tile() +  # Heatmap-like tiles
+  scale_fill_distiller(palette = "Spectral", name = "Value") +  
+  labs(title = "Hovmöller Plot of Value over Time and Region",
+       x = "Date",
+       y = "Region") +
+  scale_x_date(date_labels = "%Y-%m-%d", date_breaks = "1 year") +  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+```
+
+## Spatial Plot
+
+```{r}
+# Load Hungary shapefile
+hungary_sf <- st_read("C:/Users/User/Downloads/hungary_shp/hu.shp")
+
+# Rename and ensure uppercase region names
+hungary_sf <- hungary_sf %>% rename(Region = name)
+hungary_sf$Region <- toupper(hungary_sf$Region)
+
+# Define city-to-county mapping
+city_to_county <- c(
+  "SOPRON" = "GYOR-MOSON-SOPRON",
+  "SZEGED" = "CSONGRÁD",
+  "SALGÓTARJÁN" = "NÓGRÁD",
+  "SZOLNOK" = "JÁSZ-NAGYKUN-SZOLNOK",
+  "ÉRD" = "PEST",
+  "EGER" = "HEVES",
+  "MISKOLC" = "BORSOD-ABAÚJ-ZEMPLÉN",
+  "HÓDMEZÔVÁSÁRHELY" = "CSONGRÁD",
+  "DUNAÚJVÁROS" = "FEJÉR",
+  "KECSKEMÉT" = "BÁCS-KISKUN",
+  "TATABÁNYA" = "KOMÁROM-ESZTERGOM",
+  "GYÔR" = "GYOR-MOSON-SOPRON",
+  "SZOMBATHELY" = "VAS",
+  "ZALAEGERSZEG" = "ZALA",
+  "NAGYKANIZSA" = "ZALA",
+  "KAPOSVÁR" = "SOMOGY",
+  "PÉCS" = "BARANYA",
+  "SZEKSZÁRD" = "TOLNA",
+  "SZÉKESFEHÉRVÁR" = "FEJÉR",
+  "BÉKÉSCSABA" = "BÉKÉS",
+  "DEBRECEN" = "HAJDÚ-BIHAR",
+  "NYÍREGYHÁZA" = "SZABOLCS-SZATMÁR-BEREG"
+)
+
+# Update region names in case data
+data_long$Region <- recode(data_long$Region, !!!city_to_county)
+
+# Update region names in spatial data
+hungary_sf$Region <- recode(hungary_sf$Region, !!!city_to_county)
+
+# merge cities into counties
+hungary_sf <- hungary_sf %>%
+  group_by(Region) %>%
+  summarise(geometry = st_union(geometry), .groups = "drop")
+
+# Filter for specific dates
+data_subset <- data_long %>%
+  filter(Date %in% as.Date(c("2010-01-11", "2010-01-18", "2010-01-25", "2012-07-02", "2012-07-09",
+                             "2012-07-16", "2014-12-01","2014-12-08", "2014-12-15")))
+
+# Merge datasets (full join ensures no data loss)
+hungary_data <- full_join(hungary_sf, data_subset, by = "Region")
+
+hungary_data$Value <- replace_na(hungary_data$Value, 0)
+
+# Generate separate plots for each date
+unique_dates <- unique(data_subset$Date)
+
+
+for (d in unique_dates) {
+  d_date <- as.Date(d, origin = "1970-01-01")  # Ensure 'd' is treated as a Date; represent the internal numeric representation of dates in R (1970-01-01+12786 days=2005-01-03_)
+  
+  plot <- ggplot(hungary_data %>% filter(Date == d)) +
+    geom_sf(aes(fill = Value), color = "black") +  
+    scale_fill_distiller(palette = "Spectral", name = "Value") +  
+    labs(title = paste("Spatial Plot of Hungarian Counties -", format(d_date, "%Y-%m-%d"))) +  
+    theme_minimal()
+  
+  print(plot) 
+}
+
+```
+
+## Semivariogram
+
+```{r}
+# Convert 'Date' to POSIXct
+data_long$Date <- as.POSIXct(data_long$Date, format="%Y-%m-%d")
+
+# Extract unique spatial locations for STFDF
+spatial_locs <- unique(data_long[, c("long", "lat")])
+coordinates(spatial_locs) <- ~long+lat
+proj4string(spatial_locs) <- CRS("+proj=longlat +datum=WGS84")
+
+# Extract unique time points
+time_index <- unique(data_long$Date)
+
+# Create STFDF object
+STObj <- STFDF(
+  sp = spatial_locs,
+  time = time_index,
+  data = data_long["Value"]  # Match data length
+)
+```
+
+```{r}
+STObj  # Check if it worked correctly
+
+```
+
+```{r}
+#If nrow(STObj@data) == length(STObj@sp) * nrow(STObj@time), then STFDF object is fully correct
+#If FALSE, it means the data does not align with the spatiotemporal grid, which could cause issues later.
+nrow(STObj@data) == length(STObj@sp) * nrow(STObj@time)
+```
+
+```{r}
+summary(STObj@data)
+any(is.na(STObj@data))
+```
+
+```{r}
+# Compute residuals from the linear model
+data_long$residuals <- residuals(lm(Value ~ Date + long + lat, data = data_long))
+```
+
+```{r, warning=FALSE}
+# Remove duplicates by keeping unique combinations of Date, Region, and Value
+data_long_unique <- data_long %>%
+  distinct(Date, Region, Value, .keep_all = TRUE)
+
+# perform the join without duplicates
+data_long_joined <- data_long_unique %>% select(Date, Region, residuals, Value)
+
+# Add Date and Region to STObj@data
+STObj@data <- left_join(STObj@data, data_long_joined, by = "Value")
+
+```
+
+```{r}
+colnames(STObj@data)
+colnames(data_long)
+
+```
+
+```{r, warning=FALSE}
+vv <- variogram(
+  object = residuals ~ 1,  
+  data = STObj,
+  width = 10,   
+  cutoff = 500, # Lower cutoff to 500 km for better spatial resolution
+  tlags = seq(0.01, 4.01, by = 1)  # Focus on shorter time lags (0 to 4 weeks)
+)
+
+plot(vv, main="Spatiotemporal Semivariogram of Chickenpox Cases")
+
+
+```
